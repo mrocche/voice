@@ -1,6 +1,6 @@
 export function midiToName(midiNote: number): string {
   const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-  const octave = Math.floor(midiNote) // 12 - 1;
+  const octave = Math.floor(Math.floor(midiNote) / 12) - 1;
   const noteName = notes[Math.floor(midiNote) % 12];
   return `${noteName}${octave}`;
 }
