@@ -121,8 +121,8 @@ export function PracticeView({ song }: PracticeViewProps) {
           closestUser = user;
         }
       }
-      // If within time window and user note is above reference (or close enough)
-      if (closestUser && closestDt < 0.5) {
+      // If within tight time window (0.15s) and user note is above reference
+      if (closestUser && closestDt < 0.15) {
         if (closestUser.midiNote >= ref.midiNote - 0.5) {
           matched++;
         }

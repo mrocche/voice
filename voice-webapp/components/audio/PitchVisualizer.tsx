@@ -130,7 +130,7 @@ export function PitchVisualizer({
         const x = timeToX(alignedTime, width);
         const y = midiToY(point.midiNote);
 
-        // Find the CLOSEST reference note in time
+        // Find closest reference note within time window
         let closestRef: typeof referenceData[0] | null = null;
         let closestDt = Infinity;
         for (const ref of referenceData) {
@@ -141,8 +141,8 @@ export function PitchVisualizer({
           }
         }
 
-        // Only color green/red if within time window
-        if (closestRef && closestDt < 0.5) {
+        // Only color green/red if within tight time window (0.15s)
+        if (closestRef && closestDt < 0.15) {
           if (point.midiNote >= closestRef.midiNote - 0.5) {
             ctx.fillStyle = '#22c55e';
           } else {
