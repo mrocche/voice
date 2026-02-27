@@ -44,6 +44,7 @@ export function PracticeView({ song }: PracticeViewProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [volume, setVolumeState] = useState(0.8);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [score, setScore] = useState(0);
   
   const currentTimeRef = useRef(0);
   const lastPitchTimeRef = useRef(0);
@@ -97,6 +98,33 @@ export function PracticeView({ song }: PracticeViewProps) {
   useEffect(() => {
     setVolume(volume);
   }, [volume, setVolume]);
+
+  // Calculate score based on pitch accuracy
+  useEffect(() => {
+    if (liveData.length === 0 || referenceData.length === 0) {
+      setScore(0);
+      return;
+    }
+    let matched = 0;
+    for (const point of liveData) {
+      const alignedTime = point.time - latencyOffset;
+      let closestRef = null;
+      let closestDt = Infinity;
+      for (const ref of referenceData) {
+        const dt = Math.abs(ref.time - alignedTime);
+        if (dt < closestDt) {
+          closestDt = dt;
+          closestRef = ref;
+        }
+      }
+      if (closestRef && closestDt < 0.5) {
+        if (point.midiNote >= closestRef.midiNote - 0.5) {
+          matched++;
+        }
+      }
+    }
+    setScore(Math.round((matched / liveData.length) * 100));
+  }, [liveData, referenceData, latencyOffset]);
 
   // Auto-start microphone on mount
   useEffect(() => {
@@ -213,6 +241,15 @@ export function PracticeView({ song }: PracticeViewProps) {
                 shouldShowPitch ? 'text-green-600' : 'text-gray-300'
               }`}>
                 {shouldShowPitch ? midiToName(lastDetectedPitch!) : '--'}
+              </span>
+            </div>
+            
+            {/* Score display */}
+            <div className="px-4 py-2 bg-gray-100 rounded-lg min-w-[80px] text-center">
+              <span className={`text-2xl font-bold tabular-nums ${
+                score >= 70 ? 'text-green-600' : score >= 40 ? 'text-yellow-600' : 'text-red-500'
+              }`}>
+                {score}%
               </span>
             </div>
             
