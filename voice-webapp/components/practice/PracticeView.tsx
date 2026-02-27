@@ -99,32 +99,38 @@ export function PracticeView({ song }: PracticeViewProps) {
     setVolume(volume);
   }, [volume, setVolume]);
 
-  // Calculate score based on pitch accuracy
+  // Calculate score based on how many reference notes have a green user note above
   useEffect(() => {
     if (liveData.length === 0 || referenceData.length === 0) {
       setScore(0);
       return;
     }
     let matched = 0;
-    for (const point of liveData) {
-      const alignedTime = point.time - latencyOffset;
-      let closestRef = null;
+    for (const ref of referenceData) {
+      // Only consider reference notes that have passed
+      if (ref.time > currentTime) continue;
+      
+      // Find closest user point to this reference
+      let closestUser = null;
       let closestDt = Infinity;
-      for (const ref of referenceData) {
+      for (const user of liveData) {
+        const alignedTime = user.time - latencyOffset;
         const dt = Math.abs(ref.time - alignedTime);
         if (dt < closestDt) {
           closestDt = dt;
-          closestRef = ref;
+          closestUser = user;
         }
       }
-      if (closestRef && closestDt < 0.5) {
-        if (point.midiNote >= closestRef.midiNote - 0.5) {
+      // If within time window and user note is above reference (or close enough)
+      if (closestUser && closestDt < 0.5) {
+        if (closestUser.midiNote >= ref.midiNote - 0.5) {
           matched++;
         }
       }
     }
-    setScore(Math.round((matched / liveData.length) * 100));
-  }, [liveData, referenceData, latencyOffset]);
+    const totalPassedRefs = referenceData.filter(r => r.time <= currentTime).length;
+    setScore(totalPassedRefs > 0 ? Math.round((matched / totalPassedRefs) * 100) : 0);
+  }, [liveData, referenceData, latencyOffset, currentTime]);
 
   // Auto-start microphone on mount
   useEffect(() => {
