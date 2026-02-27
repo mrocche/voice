@@ -134,7 +134,7 @@ export function PitchVisualizer({
         let hasNearbyRef = false;
         for (const ref of referenceData) {
           const dt = Math.abs(ref.time - alignedTime);
-          if (dt < 0.3) {
+          if (dt < 0.5) {
             hasNearbyRef = true;
             // Green if above (higher pitch), also green if close enough below
             if (point.midiNote >= ref.midiNote - 0.5) {
