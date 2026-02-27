@@ -123,8 +123,8 @@ export function PitchVisualizer({
 
     // Draw live notes (colored by accuracy) - shifted by latency to align with reference
     for (const point of liveData) {
-      // Shift live note time by latency to align with reference timing
-      const alignedTime = point.time + latencyOffset;
+      // Shift live note time by latency (subtract to align with earlier reference)
+      const alignedTime = point.time - latencyOffset;
       const relTime = alignedTime - currentTime;
       if (relTime >= -pastDuration && relTime <= 0) {
         const x = timeToX(alignedTime, width);
