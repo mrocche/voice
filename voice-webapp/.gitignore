@@ -39,3 +39,18 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# audio files (user uploads)
+public/audio/*.wav
+public/audio/*.mp3
+public/audio/songs.json
+public/audio/vocals/
+
+# temp processing
+temp_processing/
+
+# python (if in webapp directory)
+*.py
+__pycache__/
+venv/
+*.pkl
