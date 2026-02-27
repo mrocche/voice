@@ -130,22 +130,26 @@ export function PitchVisualizer({
         const x = timeToX(alignedTime, width);
         const y = midiToY(point.midiNote);
 
-        // Find closest reference note for accuracy - compare at aligned time
-        let error = 2;
+        // Find if there's a reference note nearby in time
+        let hasNearbyRef = false;
         for (const ref of referenceData) {
           const dt = Math.abs(ref.time - alignedTime);
           if (dt < 0.3) {
-            error = Math.abs(ref.midiNote - point.midiNote);
+            hasNearbyRef = true;
+            // Green if above (higher pitch), red if below (lower pitch)
+            if (point.midiNote > ref.midiNote) {
+              ctx.fillStyle = '#22c55e';
+            } else if (point.midiNote < ref.midiNote) {
+              ctx.fillStyle = '#ef4444';
+            } else {
+              ctx.fillStyle = '#22c55e';
+            }
             break;
           }
         }
-
-        // Color based on error
-        if (error < 0.5) {
-          ctx.fillStyle = '#22c55e';
-        } else if (error < 1) {
-          ctx.fillStyle = '#eab308';
-        } else {
+        
+        // If no nearby reference, mark based on whether there's any reference nearby in time window
+        if (!hasNearbyRef) {
           ctx.fillStyle = '#ef4444';
         }
         
