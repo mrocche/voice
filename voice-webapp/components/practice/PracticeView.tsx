@@ -14,6 +14,22 @@ interface PracticeViewProps {
   song: Song;
 }
 
+function getInitialSettings(): { latency: number; audioMode: 'original' | 'vocals'; pitchMode: 'original' | 'vocals' } {
+  if (typeof window === 'undefined') {
+    return { latency: 0.25, audioMode: 'vocals', pitchMode: 'vocals' };
+  }
+  const savedLatency = localStorage.getItem('voiceApp_latency');
+  const savedAudioMode = localStorage.getItem('voiceApp_audioMode');
+  const savedPitchMode = localStorage.getItem('voiceApp_pitchMode');
+  return {
+    latency: savedLatency ? parseFloat(savedLatency) : 0.25,
+    audioMode: (savedAudioMode === 'original' || savedAudioMode === 'vocals') ? savedAudioMode : 'vocals',
+    pitchMode: (savedPitchMode === 'original' || savedPitchMode === 'vocals') ? savedPitchMode : 'vocals',
+  };
+}
+
+const initialSettings = getInitialSettings();
+
 export function PracticeView({ song }: PracticeViewProps) {
   const router = useRouter();
   const [livePitch, setLivePitch] = useState<number | null>(null);
@@ -22,11 +38,12 @@ export function PracticeView({ song }: PracticeViewProps) {
   const [liveData, setLiveData] = useState<PitchPoint[]>([]);
   const [isMicEnabled, setIsMicEnabled] = useState(false);
   const [useVocals, setUseVocals] = useState(true);
-  const [audioMode, setAudioMode] = useState<'original' | 'vocals'>('vocals');
-  const [pitchMode, setPitchMode] = useState<'original' | 'vocals'>('vocals');
-  const [latencyOffset, setLatencyOffset] = useState(0.25);
+  const [audioMode, setAudioMode] = useState<'original' | 'vocals'>(initialSettings.audioMode);
+  const [pitchMode, setPitchMode] = useState<'original' | 'vocals'>(initialSettings.pitchMode);
+  const [latencyOffset, setLatencyOffset] = useState(initialSettings.latency);
   const [showSettings, setShowSettings] = useState(false);
   const [volume, setVolumeState] = useState(0.8);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   
   const currentTimeRef = useRef(0);
   const lastPitchTimeRef = useRef(0);
@@ -34,20 +51,9 @@ export function PracticeView({ song }: PracticeViewProps) {
   const { isCapturing, startCapture, stopCapture, getPitch, audioLevel } = useAudioCapture();
   const { isPlaying, currentTime, duration, loadAudio, play, pause, stop, seek, setVolume } = useAudioPlayback();
 
-  // Load settings from localStorage on mount
+  // Mark settings as loaded after mount
   useEffect(() => {
-    const savedLatency = localStorage.getItem('voiceApp_latency');
-    if (savedLatency) {
-      setLatencyOffset(parseFloat(savedLatency));
-    }
-    const savedAudioMode = localStorage.getItem('voiceApp_audioMode');
-    if (savedAudioMode) {
-      setAudioMode(savedAudioMode as 'original' | 'vocals');
-    }
-    const savedPitchMode = localStorage.getItem('voiceApp_pitchMode');
-    if (savedPitchMode) {
-      setPitchMode(savedPitchMode as 'original' | 'vocals');
-    }
+    setSettingsLoaded(true);
   }, []);
 
   // Save latency to localStorage when it changes
@@ -72,6 +78,7 @@ export function PracticeView({ song }: PracticeViewProps) {
 
   // Determine which audio and pitch data to use based on settings
   useEffect(() => {
+    if (!settingsLoaded) return;
     // Audio file to play
     const audioSrc = (audioMode === 'vocals' && song.vocalFilename)
       ? `/audio/${song.vocalFilename}`
@@ -84,7 +91,7 @@ export function PracticeView({ song }: PracticeViewProps) {
       : song.pitchDataOriginal;
     
     setReferenceData(pitchData || []);
-  }, [song, audioMode, loadAudio]);
+  }, [song, audioMode, loadAudio, settingsLoaded]);
 
   // Apply volume
   useEffect(() => {
