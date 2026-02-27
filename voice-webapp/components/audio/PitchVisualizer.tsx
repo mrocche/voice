@@ -89,8 +89,9 @@ export function PitchVisualizer({
       }
     }
 
-    // Draw "now" line at current playback position (no offset)
-    const nowX = timeToX(currentTime, width);
+    // Draw "now" line at position shifted by latency (where user's voice will appear)
+    const nowTimeAdjusted = currentTime - latencyOffset;
+    const nowX = timeToX(nowTimeAdjusted, width);
     
     // Black line for now
     ctx.strokeStyle = '#1e293b';
@@ -122,17 +123,17 @@ export function PitchVisualizer({
 
     // Draw live notes (colored by accuracy) - shifted by latency to align with reference
     for (const point of liveData) {
-      // Apply latency offset to live notes so they align with reference
-      const shiftedTime = point.time - latencyOffset;
-      const relTime = shiftedTime - currentTime;
+      // Shift live note time by latency to align with reference timing
+      const alignedTime = point.time + latencyOffset;
+      const relTime = alignedTime - currentTime;
       if (relTime >= -pastDuration && relTime <= 0) {
-        const x = timeToX(shiftedTime, width);
+        const x = timeToX(alignedTime, width);
         const y = midiToY(point.midiNote);
 
-        // Find closest reference note for accuracy - compare at shifted time
+        // Find closest reference note for accuracy - compare at aligned time
         let error = 2;
         for (const ref of referenceData) {
-          const dt = Math.abs(ref.time - shiftedTime);
+          const dt = Math.abs(ref.time - alignedTime);
           if (dt < 0.3) {
             error = Math.abs(ref.midiNote - point.midiNote);
             break;
