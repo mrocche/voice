@@ -136,13 +136,11 @@ export function PitchVisualizer({
           const dt = Math.abs(ref.time - alignedTime);
           if (dt < 0.3) {
             hasNearbyRef = true;
-            // Green if above (higher pitch), red if below (lower pitch)
-            if (point.midiNote > ref.midiNote) {
+            // Green if above (higher pitch), also green if close enough below
+            if (point.midiNote >= ref.midiNote - 0.5) {
               ctx.fillStyle = '#22c55e';
-            } else if (point.midiNote < ref.midiNote) {
-              ctx.fillStyle = '#ef4444';
             } else {
-              ctx.fillStyle = '#22c55e';
+              ctx.fillStyle = '#ef4444';
             }
             break;
           }
