@@ -16,13 +16,13 @@ interface PracticeViewProps {
 
 function getInitialSettings(): { latency: number; audioMode: 'original' | 'vocals'; pitchMode: 'original' | 'vocals' } {
   if (typeof window === 'undefined') {
-    return { latency: 0.25, audioMode: 'vocals', pitchMode: 'vocals' };
+    return { latency: 0, audioMode: 'vocals', pitchMode: 'vocals' };
   }
   const savedLatency = localStorage.getItem('voiceApp_latency');
   const savedAudioMode = localStorage.getItem('voiceApp_audioMode');
   const savedPitchMode = localStorage.getItem('voiceApp_pitchMode');
   return {
-    latency: savedLatency ? parseFloat(savedLatency) : 0.25,
+    latency: savedLatency ? parseFloat(savedLatency) : 0,
     audioMode: (savedAudioMode === 'original' || savedAudioMode === 'vocals') ? savedAudioMode : 'vocals',
     pitchMode: (savedPitchMode === 'original' || savedPitchMode === 'vocals') ? savedPitchMode : 'vocals',
   };
@@ -318,16 +318,17 @@ export function PracticeView({ song }: PracticeViewProps) {
               </div>
               <input
                 type="range"
-                min="0"
-                max="0.5"
+                min="-0.25"
+                max="0.25"
                 step="0.01"
                 value={latencyOffset}
                 onChange={(e) => setLatencyOffset(parseFloat(e.target.value))}
                 className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-gray-800"
               />
               <div className="flex justify-between text-xs text-gray-400 mt-1">
-                <span>0ms</span>
-                <span>500ms</span>
+                <span>-250ms</span>
+                <span>{latencyOffset >= 0 ? '+' : ''}{(latencyOffset * 1000).toFixed(0)}ms</span>
+                <span>+250ms</span>
               </div>
             </div>
           </div>
