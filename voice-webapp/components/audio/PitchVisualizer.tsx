@@ -130,14 +130,18 @@ export function PitchVisualizer({
         const x = timeToX(alignedTime, width);
         const y = midiToY(point.midiNote);
 
-        // Find closest reference note within time window
+        // Find closest reference note within visible time range only
         let closestRef: typeof referenceData[0] | null = null;
         let closestDt = Infinity;
         for (const ref of referenceData) {
-          const dt = Math.abs(ref.time - alignedTime);
-          if (dt < closestDt) {
-            closestDt = dt;
-            closestRef = ref;
+          const refRelTime = ref.time - currentTime;
+          // Only consider refs that are visible on screen (within view window)
+          if (refRelTime >= -pastDuration && refRelTime <= futureDuration) {
+            const dt = Math.abs(ref.time - alignedTime);
+            if (dt < closestDt) {
+              closestDt = dt;
+              closestRef = ref;
+            }
           }
         }
 
