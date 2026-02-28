@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSongs, addSong, updateSong } from '@/lib/storage';
+import { frequencyToMidi } from '@/lib/utils';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
@@ -14,110 +15,214 @@ const FFMPEG_PATH = '/opt/homebrew/bin/ffmpeg';
 const AUDIO_DIR = path.join(process.cwd(), 'public', 'audio');
 const TEMP_DIR = path.join(process.cwd(), 'temp_processing');
 
-function frequencyToMidi(frequency: number): number {
-  return 69 + 12 * Math.log2(frequency / 440.0);
+// ─────────────────────────────────────────────────────────────────────────────
+// YIN pitch detection (de Cheveigné & Kawahara, 2002)
+//
+// YIN uses a Cumulative Mean Normalised Difference Function (CMND) which
+// specifically suppresses subharmonic candidates — the main failure mode of
+// plain autocorrelation. It also uses parabolic interpolation for sub-sample
+// lag accuracy.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const YIN_THRESHOLD  = 0.10; // CMND minimum threshold — lower = stricter (0.10–0.15 is standard)
+const CONFIDENCE_MIN = 0.40; // Reject frames below this after normalization
+const MIN_FREQ = 80;          // ~E2 — below typical singing range
+const MAX_FREQ = 1100;        // ~C6 — above typical singing range
+const WINDOW_SIZE = 2048;     // ~46ms at 44100 Hz
+const HOP_SIZE    = 1024;     // ~23ms — finer than before, catches faster passages
+
+/**
+ * Apply a Hann window to reduce spectral leakage at chunk boundaries.
+ */
+function hannWindow(signal: Float64Array): Float64Array {
+  const n = signal.length;
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    out[i] = signal[i] * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (n - 1)));
+  }
+  return out;
 }
 
-function detectPitch(signal: Float64Array, sampleRate: number): { frequency: number; midiNote: number; confidence: number } | null {
-  const VOLUME_THRESHOLD = 0.002;
-  const MIN_FREQ = 80;
-  const MAX_FREQ = 1000;
-  
+/**
+ * YIN pitch detection on a single frame.
+ * Returns frequency, MIDI note and a confidence value (1 - CMND minimum).
+ */
+function yinDetect(
+  signal: Float64Array,
+  sampleRate: number,
+): { frequency: number; midiNote: number; confidence: number } | null {
+
   const n = signal.length;
-  
+  const half = Math.floor(n / 2);
+
+  // ── RMS gate ────────────────────────────────────────────────────────────
   let rms = 0;
-  for (let i = 0; i < n; i++) {
-    rms += signal[i] * signal[i];
-  }
+  for (let i = 0; i < n; i++) rms += signal[i] * signal[i];
   rms = Math.sqrt(rms / n);
-  
-  if (rms < VOLUME_THRESHOLD) {
-    return null;
+  if (rms < 0.003) return null;
+
+  const windowed = hannWindow(signal);
+
+  // ── Step 1: Difference function d(τ) ────────────────────────────────────
+  // d(τ) = Σ (x[j] - x[j+τ])²  for j = 0..half
+  const d = new Float64Array(half);
+  for (let tau = 1; tau < half; tau++) {
+    for (let j = 0; j < half; j++) {
+      const diff = windowed[j] - windowed[j + tau];
+      d[tau] += diff * diff;
+    }
   }
-  
-  let mean = 0;
-  for (let i = 0; i < n; i++) {
-    mean += signal[i];
+
+  // ── Step 2: Cumulative Mean Normalised Difference (CMND) ─────────────────
+  // cmnd[τ] = d[τ] / ((1/τ) * Σ d[j]  for j = 1..τ)
+  // This normalises each lag by the running mean up to that lag, which
+  // penalises lower-frequency (longer-lag) candidates — killing subharmonics.
+  const cmnd = new Float64Array(half);
+  cmnd[0] = 1;
+  let runningSum = 0;
+  for (let tau = 1; tau < half; tau++) {
+    runningSum += d[tau];
+    cmnd[tau] = runningSum === 0 ? 0 : d[tau] * tau / runningSum;
   }
-  mean /= n;
-  
+
+  // ── Step 3: Find first minimum of CMND below threshold ──────────────────
   const minLag = Math.floor(sampleRate / MAX_FREQ);
-  const maxLag = Math.floor(sampleRate / MIN_FREQ);
-  
-  if (minLag >= maxLag) {
-    return null;
-  }
-  
-  let bestLag = 0;
-  let bestCorrelation = 0;
-  
-  for (let lag = minLag; lag < Math.min(maxLag, n); lag++) {
-    let correlation = 0;
-    for (let i = 0; i < n - lag; i++) {
-      correlation += (signal[i] - mean) * (signal[i + lag] - mean);
-    }
-    if (correlation > bestCorrelation) {
-      bestCorrelation = correlation;
-      bestLag = lag;
+  const maxLag = Math.min(Math.floor(sampleRate / MIN_FREQ), half - 1);
+  if (minLag >= maxLag) return null;
+
+  let bestTau = -1;
+  for (let tau = minLag; tau <= maxLag; tau++) {
+    if (cmnd[tau] < YIN_THRESHOLD) {
+      // Find the local minimum in this dip
+      while (tau + 1 <= maxLag && cmnd[tau + 1] < cmnd[tau]) tau++;
+      bestTau = tau;
+      break;
     }
   }
-  
-  if (bestCorrelation <= 0) {
-    return null;
+
+  // If no dip below threshold, fall back to global CMND minimum in range
+  if (bestTau === -1) {
+    let minVal = Infinity;
+    for (let tau = minLag; tau <= maxLag; tau++) {
+      if (cmnd[tau] < minVal) {
+        minVal = cmnd[tau];
+        bestTau = tau;
+      }
+    }
+    // Still too noisy — reject
+    if (minVal > 0.4) return null;
   }
-  
-  let zeroLagCorr = 0;
-  for (let i = 0; i < n; i++) {
-    zeroLagCorr += (signal[i] - mean) * (signal[i] - mean);
+
+  // ── Step 4: Parabolic interpolation for sub-sample accuracy ─────────────
+  let refinedTau = bestTau;
+  if (bestTau > 1 && bestTau < half - 1) {
+    const denom = cmnd[bestTau - 1] - 2 * cmnd[bestTau] + cmnd[bestTau + 1];
+    if (Math.abs(denom) > 1e-10) {
+      const delta = 0.5 * (cmnd[bestTau - 1] - cmnd[bestTau + 1]) / denom;
+      if (Math.abs(delta) < 1) refinedTau = bestTau + delta;
+    }
   }
-  
-  const confidence = bestCorrelation / zeroLagCorr;
-  
-  if (confidence < 0.2) {
-    return null;
-  }
-  
-  const frequency = sampleRate / bestLag;
-  
-  if (frequency < MIN_FREQ || frequency > MAX_FREQ) {
-    return null;
-  }
-  
-  const midiNote = frequencyToMidi(frequency);
-  
-  return { frequency, midiNote, confidence };
+
+  const frequency = sampleRate / refinedTau;
+  if (frequency < MIN_FREQ || frequency > MAX_FREQ) return null;
+
+  const confidence = 1 - cmnd[bestTau]; // High confidence = low CMND value
+  if (confidence < CONFIDENCE_MIN) return null;
+
+  return { frequency, midiNote: frequencyToMidi(frequency), confidence };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Post-processing filters
+// ─────────────────────────────────────────────────────────────────────────────
+
+type PitchPoint = { time: number; midiNote: number; confidence: number };
+
+/**
+ * Median filter over midiNote values.
+ * Eliminates single-frame spikes without blurring real note transitions.
+ */
+function medianFilter(points: PitchPoint[], windowSize: number = 5): PitchPoint[] {
+  if (points.length < windowSize) return points;
+  const half = Math.floor(windowSize / 2);
+  return points.map((p, i) => {
+    const start = Math.max(0, i - half);
+    const end   = Math.min(points.length - 1, i + half);
+    const window = points.slice(start, end + 1).map(x => x.midiNote).sort((a, b) => a - b);
+    const median = window[Math.floor(window.length / 2)];
+    return { ...p, midiNote: median };
+  });
+}
+
+/**
+ * Jump filter — drops isolated points that are >12 semitones away from both
+ * neighbors. Catches octave errors that YIN occasionally still makes.
+ */
+function jumpFilter(points: PitchPoint[]): PitchPoint[] {
+  if (points.length < 3) return points;
+  return points.filter((p, i) => {
+    if (i === 0 || i === points.length - 1) return true;
+    const prev = points[i - 1].midiNote;
+    const next = points[i + 1].midiNote;
+    const jumpPrev = Math.abs(p.midiNote - prev);
+    const jumpNext = Math.abs(p.midiNote - next);
+    // Keep if close to at least one neighbor
+    return jumpPrev <= 12 || jumpNext <= 12;
+  });
+}
+
+/**
+ * Run-length filter — removes runs of the same approximate pitch lasting
+ * fewer than minRun consecutive frames. Short bursts are artifacts (breath,
+ * consonants, noise). Real vocal notes last longer.
+ */
+function runLengthFilter(points: PitchPoint[], minRun: number = 2): PitchPoint[] {
+  if (points.length === 0) return [];
+
+  // Group consecutive points within ±1 semitone into runs
+  const runs: PitchPoint[][] = [];
+  let current: PitchPoint[] = [points[0]];
+
+  for (let i = 1; i < points.length; i++) {
+    const timeDiff = points[i].time - points[i - 1].time;
+    const pitchDiff = Math.abs(points[i].midiNote - current[current.length - 1].midiNote);
+    // Continue run if consecutive frames and pitch is stable
+    if (timeDiff < 0.1 && pitchDiff <= 1.5) {
+      current.push(points[i]);
+    } else {
+      runs.push(current);
+      current = [points[i]];
+    }
+  }
+  runs.push(current);
+
+  // Keep only runs long enough to be a real note
+  return runs.filter(run => run.length >= minRun).flat();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio file I/O helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function convertToRawPCM(inputPath: string): Promise<{ data: Float64Array; sampleRate: number } | null> {
   const ext = path.extname(inputPath).toLowerCase();
   const sampleRate = 44100;
   const rawPath = path.join(TEMP_DIR, `${path.basename(inputPath, ext)}_${Date.now()}.raw`);
-  
-  // Ensure temp dir exists
-  if (!fs.existsSync(TEMP_DIR)) {
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
-  }
-  
-  // Convert to raw 32-bit float, mono, 44100Hz
+
+  if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
+
+  // Convert to raw 32-bit float, mono, 44100 Hz
   const command = `${FFMPEG_PATH} -i "${inputPath}" -ar ${sampleRate} -ac 1 -f f32le -y "${rawPath}"`;
-  
+
   try {
     await execAsync(command);
-    console.log(`Converted ${inputPath} to raw PCM: ${rawPath}`);
-    
-    // Read raw PCM data
     const rawData = await fs.promises.readFile(rawPath);
-    const samples = new Float64Array(rawData.length / 4); // 4 bytes per float32
-    
-    // Read as float32
+    const samples = new Float64Array(rawData.length / 4);
     const view = new DataView(rawData.buffer, rawData.byteOffset, rawData.byteLength);
     for (let i = 0; i < samples.length; i++) {
-      samples[i] = view.getFloat32(i * 4, true); // little-endian
+      samples[i] = view.getFloat32(i * 4, true);
     }
-    
-    // Clean up raw file
-    try { fs.unlinkSync(rawPath); } catch (e) {}
-    
+    try { fs.unlinkSync(rawPath); } catch {}
     return { data: samples, sampleRate };
   } catch (error) {
     console.error('FFmpeg conversion error:', error);
@@ -127,21 +232,14 @@ async function convertToRawPCM(inputPath: string): Promise<{ data: Float64Array;
 
 async function convertToWav(inputPath: string): Promise<string | null> {
   const ext = path.extname(inputPath).toLowerCase();
-  if (ext === '.wav') {
-    return inputPath;
-  }
-  
+  if (ext === '.wav') return inputPath;
+
   const wavPath = path.join(TEMP_DIR, `${path.basename(inputPath, ext)}_${Date.now()}.wav`);
-  
-  if (!fs.existsSync(TEMP_DIR)) {
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
-  }
-  
+  if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
+
   const command = `${FFMPEG_PATH} -i "${inputPath}" -ar 44100 -ac 1 -y "${wavPath}"`;
-  
   try {
     await execAsync(command);
-    console.log(`Converted ${inputPath} to WAV: ${wavPath}`);
     return wavPath;
   } catch (error) {
     console.error('FFmpeg conversion error:', error);
@@ -149,41 +247,36 @@ async function convertToWav(inputPath: string): Promise<string | null> {
   }
 }
 
-async function analyzeAudioFile(audioPath: string): Promise<{ time: number; midiNote: number; confidence: number }[]> {
+async function analyzeAudioFile(audioPath: string): Promise<PitchPoint[]> {
   const audioData = await convertToRawPCM(audioPath);
-  
   if (!audioData) {
     console.error('Failed to convert audio to PCM');
     return [];
   }
-  
+
   const { data: channelData, sampleRate } = audioData;
-  console.log(`Analyzing audio: ${channelData.length} samples at ${sampleRate} Hz`);
-  
-  const pitchPoints: { time: number; midiNote: number; confidence: number }[] = [];
-  const HOP_SIZE = 2048; // Same as client
-  
-  for (let i = 0; i < channelData.length - HOP_SIZE; i += HOP_SIZE) {
-    const chunk = new Float64Array(HOP_SIZE);
-    for (let j = 0; j < HOP_SIZE; j++) {
-      chunk[j] = channelData[i + j];
-    }
-    
-    const result = detectPitch(chunk, sampleRate);
-    
+  console.log(`Analyzing ${channelData.length} samples at ${sampleRate} Hz with YIN...`);
+
+  const rawPoints: PitchPoint[] = [];
+
+  for (let i = 0; i + WINDOW_SIZE <= channelData.length; i += HOP_SIZE) {
+    const chunk = channelData.slice(i, i + WINDOW_SIZE);
+    const result = yinDetect(chunk, sampleRate);
     if (result) {
-      const time = i / sampleRate;
-      pitchPoints.push({
-        time,
-        midiNote: result.midiNote,
-        confidence: result.confidence
-      });
+      rawPoints.push({ time: i / sampleRate, midiNote: result.midiNote, confidence: result.confidence });
     }
   }
-  
-  console.log(`Found ${pitchPoints.length} pitch points over ${(channelData.length / sampleRate).toFixed(1)}s`);
-  
-  return pitchPoints;
+
+  console.log(`YIN raw: ${rawPoints.length} points`);
+
+  // ── Post-processing pipeline ─────────────────────────────────────────────
+  let filtered = medianFilter(rawPoints, 5);    // Kill single-frame spikes
+  filtered     = jumpFilter(filtered);           // Kill octave-jump outliers
+  filtered     = runLengthFilter(filtered, 2);   // Kill sub-90ms noise bursts
+
+  console.log(`After filtering: ${filtered.length} points (removed ${rawPoints.length - filtered.length} outliers) over ${(channelData.length / sampleRate).toFixed(1)}s`);
+
+  return filtered;
 }
 
 function parseWav(buffer: Buffer): { channelData: Float64Array; sampleRate: number } | null {

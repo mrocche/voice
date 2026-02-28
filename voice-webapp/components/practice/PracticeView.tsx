@@ -15,25 +15,33 @@ interface PracticeViewProps {
   song: Song;
 }
 
+// Get per-song latency from localStorage, fallback to 0
+function getSongLatency(songId: string): number {
+  if (typeof window === 'undefined') return 0;
+  const saved = localStorage.getItem(`voiceApp_latency_${songId}`);
+  return saved ? parseFloat(saved) : 0;
+}
+
+// Save per-song latency
+function setSongLatency(songId: string, latency: number): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(`voiceApp_latency_${songId}`, latency.toString());
+}
+
 function getInitialSettings(): {
-  latency: number;
   audioMode: 'original' | 'vocals';
   pitchMode: 'original' | 'vocals';
 } {
   if (typeof window === 'undefined') {
-    return { latency: 0, audioMode: 'vocals', pitchMode: 'vocals' };
+    return { audioMode: 'vocals', pitchMode: 'vocals' };
   }
-  const savedLatency = localStorage.getItem('voiceApp_latency');
   const savedAudioMode = localStorage.getItem('voiceApp_audioMode');
   const savedPitchMode = localStorage.getItem('voiceApp_pitchMode');
   return {
-    latency: savedLatency ? parseFloat(savedLatency) : 0,
     audioMode: (savedAudioMode === 'original' || savedAudioMode === 'vocals') ? savedAudioMode : 'vocals',
     pitchMode: (savedPitchMode === 'original' || savedPitchMode === 'vocals') ? savedPitchMode : 'vocals',
   };
 }
-
-const initialSettings = getInitialSettings();
 
 // Circular score ring SVG component - responsive sizing
 function ScoreRing({ score }: { score: number }) {
@@ -124,13 +132,42 @@ export function PracticeView({ song }: PracticeViewProps) {
   const [referenceData, setReferenceData] = useState<PitchPoint[]>([]);
   const [liveData, setLiveData] = useState<PitchPoint[]>([]);
   const [isMicEnabled, setIsMicEnabled] = useState(false);
-  const [audioMode, setAudioMode] = useState<'original' | 'vocals'>(initialSettings.audioMode);
-  const [pitchMode, setPitchMode] = useState<'original' | 'vocals'>(initialSettings.pitchMode);
-  const [latencyOffset, setLatencyOffset] = useState(initialSettings.latency);
+  
+  // Read settings from localStorage after mount (not at module load time)
+  const [audioMode, setAudioMode] = useState<'original' | 'vocals'>('vocals');
+  const [pitchMode, setPitchMode] = useState<'original' | 'vocals'>('vocals');
+  const [latencyOffset, setLatencyOffset] = useState(0);
+  
   const [showSettings, setShowSettings] = useState(false);
   const [volume, setVolumeState] = useState(0.8);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [score, setScore] = useState(0);
+
+  // Track previous song to detect changes vs user edits
+  const prevSongIdRef = useRef<string>(song.id);
+
+  // Load saved settings on mount and when song changes
+  useEffect(() => {
+    const settings = getInitialSettings();
+    setAudioMode(settings.audioMode);
+    setPitchMode(settings.pitchMode);
+    // Load per-song latency
+    const savedLatency = getSongLatency(song.id);
+    setLatencyOffset(savedLatency);
+    setSettingsLoaded(true);
+    // Update ref after loading
+    prevSongIdRef.current = song.id;
+  }, [song.id]);
+
+  // Save latency only when USER changes it (not when song changes)
+  useEffect(() => { 
+    // Only save if the song hasn't changed since last render
+    if (song.id === prevSongIdRef.current && settingsLoaded) {
+      setSongLatency(song.id, latencyOffset); 
+    }
+  }, [latencyOffset, song.id, settingsLoaded]);
+  useEffect(() => { localStorage.setItem('voiceApp_audioMode', audioMode); }, [audioMode]);
+  useEffect(() => { localStorage.setItem('voiceApp_pitchMode', pitchMode); }, [pitchMode]);
 
   const currentTimeRef = useRef(0);
   const lastPitchTimeRef = useRef(0);
@@ -144,11 +181,6 @@ export function PracticeView({ song }: PracticeViewProps) {
   const { isCapturing, startCapture, stopCapture, getPitch, audioLevel } = useAudioCapture();
   const { isPlaying, currentTime, duration, loadAudio, play, pause, seek, setVolume } = useAudioPlayback();
 
-  useEffect(() => { setSettingsLoaded(true); }, []);
-
-  useEffect(() => { localStorage.setItem('voiceApp_latency', latencyOffset.toString()); }, [latencyOffset]);
-  useEffect(() => { localStorage.setItem('voiceApp_audioMode', audioMode); }, [audioMode]);
-  useEffect(() => { localStorage.setItem('voiceApp_pitchMode', pitchMode); }, [pitchMode]);
   useEffect(() => { 
     currentTimeRef.current = currentTime; 
     isPlayingRef.current = isPlaying;
@@ -215,7 +247,7 @@ export function PracticeView({ song }: PracticeViewProps) {
         const dt = Math.abs(ref.time - alignedTime);
         if (dt < closestDt) { closestDt = dt; closestUser = user; }
       }
-      if (closestUser && closestDt < 0.15 && closestUser.midiNote >= ref.midiNote - 0.5) matched++;
+      if (closestUser && closestDt < 0.15 && (Math.round(closestUser.midiNote) % 12) === (Math.round(ref.midiNote) % 12)) matched++;
     }
     const totalPassedRefs = referenceData.filter(r => r.time <= currentTime).length;
     setScore(totalPassedRefs > 0 ? Math.round((matched / totalPassedRefs) * 100) : 0);

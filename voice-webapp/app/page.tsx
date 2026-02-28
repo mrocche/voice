@@ -37,24 +37,19 @@ function PillToggle<T extends string>({
 }
 
 function getInitialSettings(): {
-  latency: number;
   audioMode: 'original' | 'vocals';
   pitchMode: 'original' | 'vocals';
 } {
   if (typeof window === 'undefined') {
-    return { latency: 0, audioMode: 'vocals', pitchMode: 'vocals' };
+    return { audioMode: 'vocals', pitchMode: 'vocals' };
   }
-  const savedLatency = localStorage.getItem('voiceApp_latency');
   const savedAudioMode = localStorage.getItem('voiceApp_audioMode');
   const savedPitchMode = localStorage.getItem('voiceApp_pitchMode');
   return {
-    latency: savedLatency ? parseFloat(savedLatency) : 0,
     audioMode: (savedAudioMode === 'original' || savedAudioMode === 'vocals') ? savedAudioMode : 'vocals',
     pitchMode: (savedPitchMode === 'original' || savedPitchMode === 'vocals') ? savedPitchMode : 'vocals',
   };
 }
-
-const initialSettings = getInitialSettings();
 
 export default function Home() {
   const router = useRouter();
@@ -62,11 +57,18 @@ export default function Home() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
-  const [audioMode, setAudioMode] = useState<'original' | 'vocals'>(initialSettings.audioMode);
-  const [pitchMode, setPitchMode] = useState<'original' | 'vocals'>(initialSettings.pitchMode);
-  const [latencyOffset, setLatencyOffset] = useState(initialSettings.latency);
+  
+  // Read settings from localStorage after mount (not at module load time)
+  const [audioMode, setAudioMode] = useState<'original' | 'vocals'>('vocals');
+  const [pitchMode, setPitchMode] = useState<'original' | 'vocals'>('vocals');
+  
+  // Load saved settings on mount
+  useEffect(() => {
+    const settings = getInitialSettings();
+    setAudioMode(settings.audioMode);
+    setPitchMode(settings.pitchMode);
+  }, []);
 
-  useEffect(() => { localStorage.setItem('voiceApp_latency', latencyOffset.toString()); }, [latencyOffset]);
   useEffect(() => { localStorage.setItem('voiceApp_audioMode', audioMode); }, [audioMode]);
   useEffect(() => { localStorage.setItem('voiceApp_pitchMode', pitchMode); }, [pitchMode]);
 
@@ -213,7 +215,7 @@ export default function Home() {
               Settings
             </h3>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 sm:gap-x-8 gap-y-4 sm:gap-y-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 sm:gap-x-8 gap-y-4 sm:gap-y-6">
               {/* Audio source */}
               {hasVocals && (
                 <div className="min-w-0">
@@ -262,31 +264,6 @@ export default function Home() {
                       <span className="hidden sm:inline">{opt.label}</span>
                     </button>
                   ))}
-                </div>
-              </div>
-
-              {/* Latency slider */}
-              <div className="min-w-0">
-                <div className="flex items-center justify-between mb-2 sm:mb-3">
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">
-                    Latency Correction
-                  </label>
-                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 tabular-nums">
-                    {latencyOffset >= 0 ? '+' : ''}{(latencyOffset * 1000).toFixed(0)}ms
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="-0.5"
-                  max="0.5"
-                  step="0.01"
-                  value={latencyOffset}
-                  onChange={e => setLatencyOffset(parseFloat(e.target.value))}
-                  className="w-full cursor-pointer block"
-                />
-                <div className="flex justify-between text-xs text-gray-400 dark:text-gray-600 mt-1 sm:mt-2">
-                  <span>-500ms</span>
-                  <span>+500ms</span>
                 </div>
               </div>
             </div>

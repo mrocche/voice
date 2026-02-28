@@ -333,7 +333,7 @@ export function PitchVisualizer({
 
       const isGood = closestRef !== null
         && closestDt < 0.15
-        && Math.abs(p.midiNote - closestRef.midiNote) <= 1;
+        && (Math.round(p.midiNote) % 12) === (Math.round(closestRef.midiNote) % 12);
 
       // Trail opacity: last trailCount dots fade from 0.3 → 1.0
       const trailPos = sortedLive.length - 1 - i;
